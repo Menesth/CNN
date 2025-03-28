@@ -28,7 +28,6 @@ train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
 test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False)
 ################################
 
-
 ####### Model #######
 class CNN_block(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, padding=1, max_pool_kernel_size=2):
@@ -76,9 +75,9 @@ class CNN(nn.Module):
 
     def argmax_predict(self, x):
         logits = self.forward(x)            # [batch_size, 10]
+        probs = F.softmax(logits, dim=-1)   # [batch_size, 10]
         pred = torch.argmax(logits, dim=-1) # [batch_size]
         return pred
-
 ############################
 
 ##### Initialize model ######

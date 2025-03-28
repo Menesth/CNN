@@ -76,7 +76,7 @@ class CNN(nn.Module):
     def argmax_predict(self, x):
         logits = self.forward(x)            # [batch_size, 10]
         probs = F.softmax(logits, dim=-1)   # [batch_size, 10]
-        pred = torch.argmax(logits, dim=-1) # [batch_size]
+        pred = torch.argmax(probs, dim=-1)  # [batch_size]
         return pred
 ############################
 

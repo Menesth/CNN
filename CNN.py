@@ -10,7 +10,7 @@ from tqdm import trange
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
-EPOCHS = 5
+EPOCHS = 10
 DROPOUT = 0.2
 LR = 1e-3
 BATCH_SIZE = 64
@@ -20,18 +20,9 @@ LOSS = nn.CrossEntropyLoss()
 ####### Data Preparation #######
 transform = transforms.ToTensor()
 
-train_data = datasets.MNIST(
-    root='./data',
-    train=True,
-    download=True,
-    transform=transform
-)
-test_data = datasets.MNIST(
-    root='./data',
-    train=False,
-    download=True,
-    transform=transform
-)
+train_data = datasets.MNIST(root='./data', train=True, download=True, transform=transform)
+
+test_data = datasets.MNIST(root='./data', train=False, download=True, transform=transform)
 
 train_loader = DataLoader(train_data, batch_size=BATCH_SIZE, shuffle=True)
 test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False)
@@ -39,26 +30,44 @@ test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False)
 
 
 ####### Model #######
-class CNN(nn.Module):
-    def __init__(self):
+class CNN_block(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1, max_pool_kernel_size=2):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=3, padding=1)
-        self.fc1 = nn.Linear(in_features=32 * 7 * 7, out_features=128)
-        self.fc2 = nn.Linear(in_features=128, out_features=10)
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, padding=padding)
+        self.batchnorm = nn.BatchNorm2d(num_features=out_channels)
+        self.relu = nn.ReLU()
         self.dropout = nn.Dropout(DROPOUT)
+        self.maxpool = nn.MaxPool2d(kernel_size=max_pool_kernel_size)
 
-    def forward(self, x):            # [batch_size, 1, 28, 28]
-        x = F.relu(self.conv1(x))    # [batch_size, 16, 28, 28]
-        x = F.max_pool2d(x, 2)       # [batch_size, 16, 14, 14]
-        x = F.relu(self.conv2(x))    # [batch_size, 32, 14, 14]
-        x = F.max_pool2d(x, 2)       # [batch_size, 32, 7, 7]
-        x = x.view(x.size(0), -1)    # [batch_size, 32*7*7]
-
-        x = self.dropout(F.relu(self.fc1(x)))  # [batch_size, 128]
-        x = self.fc2(x)                        # [batch_size, 10]
+    def forward(self, x):      # [batch_size, in_channels, 28, 28]
+        x = self.conv1(x)      # [batch_size, out_channels, 28, 28]
+        x = self.batchnorm(x)  # [batch_size, out_channels, 28, 28]
+        x = self.relu(x)       # [batch_size, out_channels, 28, 28]
+        x = self.dropout(x)    # [batch_size, out_channels, 28, 28]
+        x = self.maxpool(x)    # [batch_size, out_channels, 28/max_pool_kernel_size, 28/max_pool_kernel_size]
         return x
-    
+
+class CNN(nn.Module):
+    def __init__(self, in_channels=1, hidden_channels=16, out_channels=16, max_pool_kernel_size=2, out_ffw = 2 ** 6):
+        super().__init__()
+        self.block1 = CNN_block(in_channels=in_channels, out_channels=hidden_channels)
+        self.block2 = CNN_block(in_channels=hidden_channels, out_channels=out_channels)
+        self.ffw = nn.Linear(out_channels * ((28//(max_pool_kernel_size) ** 2) ** 2), out_ffw)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(DROPOUT)
+        self.fc = nn.Linear(out_ffw, 10)
+
+    def forward(self, x):   # [batch_size, in_channels, 28, 28]
+        x = self.block1(x)  # [batch_size, out_channels, 28/max_pool_kernel_size, 28/max_pool_kernel_size]
+        x = self.block2(x)  # [batch_size, out_channels, 28/max_pool_kernel_size/max_pool_kernel_size, 28/max_pool_kernel_size/max_pool_kernel_size]
+        b, c, h, w = x.shape
+        x = x.view(b, c*h*w) # [batch_size, out_channels * 28/max_pool_kernel_size/max_pool_kernel_size * 28/max_pool_kernel_size/max_pool_kernel_size]
+        x = self.ffw(x)      # [batch_size, out_ffw]
+        x = self.relu(x)     # [batch_size, out_ffw]
+        x = self.dropout(x)  # [batch_size, out_ffw]
+        x = self.fc(x)       # [batch_size, 10]
+        return x
+
     def stochastic_predict(self, x):
         logits = self.forward(x)                       # [batch_size, 10]
         probs = F.softmax(logits, dim=-1)              # [batch_size, 10]
@@ -69,6 +78,7 @@ class CNN(nn.Module):
         logits = self.forward(x)            # [batch_size, 10]
         pred = torch.argmax(logits, dim=-1) # [batch_size]
         return pred
+
 ############################
 
 ##### Initialize model ######
@@ -80,6 +90,7 @@ print(f'number of parameters: {nb_params}')
 
 ####### Training ########
 optimizer = optim.Adam(model.parameters(), lr=LR)
+scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1 if epoch < 6 else 0.1)
 
 for epoch in trange(EPOCHS):
     model.train()
@@ -97,6 +108,7 @@ for epoch in trange(EPOCHS):
 
         running_loss += loss.item()
 
+    scheduler.step()
     avg_train_loss = running_loss / len(train_loader)
     print(f"epoch [{epoch+1}/{EPOCHS}], batch loss: {avg_train_loss:.4f}")
 ############################

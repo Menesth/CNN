@@ -10,8 +10,8 @@ from tqdm import trange
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
-EPOCHS = 10
-DROPOUT = 0.2
+EPOCHS = 5
+DROPOUT = 0.1
 LR = 1e-3
 BATCH_SIZE = 64
 LOSS = nn.CrossEntropyLoss()
@@ -29,43 +29,76 @@ test_loader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=False)
 ################################
 
 ####### Model #######
-class CNN_block(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1, max_pool_kernel_size=2):
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, padding=padding)
-        self.batchnorm = nn.BatchNorm2d(num_features=out_channels)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(DROPOUT)
-        self.maxpool = nn.MaxPool2d(kernel_size=max_pool_kernel_size)
+        self.conv1 = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
 
-    def forward(self, x):      # [batch_size, in_channels, 28, 28]
-        x = self.conv1(x)      # [batch_size, out_channels, 28, 28]
-        x = self.batchnorm(x)  # [batch_size, out_channels, 28, 28]
-        x = self.relu(x)       # [batch_size, out_channels, 28, 28]
-        x = self.dropout(x)    # [batch_size, out_channels, 28, 28]
-        x = self.maxpool(x)    # [batch_size, out_channels, 28/max_pool_kernel_size, 28/max_pool_kernel_size]
-        return x
+        self.conv2 = nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.downsample = downsample
+
+    def forward(self, x):
+        residual = x
+        
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = F.relu(out, inplace=True)
+        out = F.dropout(out, p=DROPOUT)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(x)
+
+        out = out + residual # residual connection
+        out = F.relu(out, inplace=True)
+        return out
 
 class CNN(nn.Module):
-    def __init__(self, in_channels=1, hidden_channels=16, out_channels=16, max_pool_kernel_size=2, out_ffw = 2 ** 6):
+    def __init__(self, block=ResBlock, layers=[2, 2, 2], channels = [32, 64, 128], num_classes=10):
         super().__init__()
-        self.block1 = CNN_block(in_channels=in_channels, out_channels=hidden_channels)
-        self.block2 = CNN_block(in_channels=hidden_channels, out_channels=out_channels)
-        self.ffw = nn.Linear(out_channels * ((28//(max_pool_kernel_size) ** 2) ** 2), out_ffw)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(DROPOUT)
-        self.fc = nn.Linear(out_ffw, 10)
+        self.in_channels = channels[0]
+        self.conv = nn.Conv2d(in_channels=1, out_channels=self.in_channels, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn = nn.BatchNorm2d(self.in_channels)
 
-    def forward(self, x):   # [batch_size, in_channels, 28, 28]
-        x = self.block1(x)  # [batch_size, out_channels, 28/max_pool_kernel_size, 28/max_pool_kernel_size]
-        x = self.block2(x)  # [batch_size, out_channels, 28/max_pool_kernel_size/max_pool_kernel_size, 28/max_pool_kernel_size/max_pool_kernel_size]
-        b, c, h, w = x.shape
-        x = x.view(b, c*h*w) # [batch_size, out_channels * 28/max_pool_kernel_size/max_pool_kernel_size * 28/max_pool_kernel_size/max_pool_kernel_size]
-        x = self.ffw(x)      # [batch_size, out_ffw]
-        x = self.relu(x)     # [batch_size, out_ffw]
-        x = self.dropout(x)  # [batch_size, out_ffw]
-        x = self.fc(x)       # [batch_size, 10]
-        return x
+        strides = [1] + [2 for _ in range(len(layers) - 1)]
+        self.layers = nn.Sequential(*[self._make_layer(block, out_channels=channels[i], blocks=layers[0], stride = strides[i]) for i in range(len(layers))])
+
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(channels[-1], num_classes)
+
+    def forward(self, x):                        # [batch_size, 1, 28, 28]
+        out = self.conv(x)                       # [batch_size, 64, 14, 14]
+        out = F.relu(self.bn(out), inplace=True) # [batch_size, channels[0], 14, 14]
+
+        out = self.layers(out)                   # [batch_size, channels[-1], 4, 4]
+
+        out = self.avgpool(out)                  # [batch_size, channels[-1], 1, 1]
+
+        b, c, h, w = out.shape                      
+        out = out.view(b, c * h * w)             # [batch_size, channels[-1]]
+        out = self.fc(out)                       # [batch_size, num_classes]
+        return out
+
+    def _make_layer(self, block, out_channels, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.in_channels != out_channels:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)
+                )
+
+        layers = []
+        layers.append(block(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels
+
+        for _ in range(1, blocks):
+            layers.append(block(self.in_channels, out_channels))
+        return nn.Sequential(*layers)
 
     def stochastic_predict(self, x):
         logits = self.forward(x)                       # [batch_size, 10]
@@ -86,6 +119,7 @@ model = CNN().to(device)
 nb_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f'number of parameters: {nb_params}')
 ############################
+
 
 ####### Training ########
 optimizer = optim.Adam(model.parameters(), lr=LR)

@@ -10,7 +10,7 @@ from tqdm import trange
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
-EPOCHS = 5
+EPOCHS = 10
 DROPOUT = 0.1
 LR = 1e-3
 BATCH_SIZE = 64
@@ -59,14 +59,14 @@ class ResBlock(nn.Module):
         return out
 
 class CNN(nn.Module):
-    def __init__(self, block=ResBlock, layers=[2, 2, 2], channels = [32, 64, 128], num_classes=10):
+    def __init__(self, layers=[2, 2, 2], channels = [64, 128, 256], num_classes=10):
         super().__init__()
         self.in_channels = channels[0]
         self.conv = nn.Conv2d(in_channels=1, out_channels=self.in_channels, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn = nn.BatchNorm2d(self.in_channels)
 
         strides = [1] + [2 for _ in range(len(layers) - 1)]
-        self.layers = nn.Sequential(*[self._make_layer(block, out_channels=channels[i], blocks=layers[0], stride = strides[i]) for i in range(len(layers))])
+        self.layers = nn.Sequential(*[self._make_layer(out_channels=channels[i], blocks=layers[0], stride = strides[i]) for i in range(len(layers))])
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(channels[-1], num_classes)
@@ -84,7 +84,7 @@ class CNN(nn.Module):
         out = self.fc(out)                       # [batch_size, num_classes]
         return out
 
-    def _make_layer(self, block, out_channels, blocks, stride=1):
+    def _make_layer(self, out_channels, blocks, stride=1):
         downsample = None
         if stride != 1 or self.in_channels != out_channels:
             downsample = nn.Sequential(
@@ -93,11 +93,11 @@ class CNN(nn.Module):
                 )
 
         layers = []
-        layers.append(block(self.in_channels, out_channels, stride, downsample))
+        layers.append(ResBlock(self.in_channels, out_channels, stride, downsample))
         self.in_channels = out_channels
 
         for _ in range(1, blocks):
-            layers.append(block(self.in_channels, out_channels))
+            layers.append(ResBlock(self.in_channels, out_channels))
         return nn.Sequential(*layers)
 
     def stochastic_predict(self, x):

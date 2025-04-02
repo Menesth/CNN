@@ -10,7 +10,7 @@ from tqdm import trange
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.manual_seed(1337)
 torch.cuda.manual_seed(1337)
-EPOCHS = 10
+EPOCHS = 5
 DROPOUT = 0.1
 LR = 1e-3
 BATCH_SIZE = 64
@@ -56,10 +56,11 @@ class ResBlock(nn.Module):
 
         out = out + residual # residual connection
         out = F.relu(out, inplace=True)
+        out = F.dropout(out, p=DROPOUT)
         return out
 
 class CNN(nn.Module):
-    def __init__(self, layers=[2, 2, 2], channels = [64, 128, 256], num_classes=10):
+    def __init__(self, layers=[2, 2, 2], channels = [32, 64, 128], num_classes=10):
         super().__init__()
         self.in_channels = channels[0]
         self.conv = nn.Conv2d(in_channels=1, out_channels=self.in_channels, kernel_size=7, stride=2, padding=3, bias=False)
@@ -74,6 +75,7 @@ class CNN(nn.Module):
     def forward(self, x):                        # [batch_size, 1, 28, 28]
         out = self.conv(x)                       # [batch_size, 64, 14, 14]
         out = F.relu(self.bn(out), inplace=True) # [batch_size, channels[0], 14, 14]
+        out = F.dropout(out, p=DROPOUT)          # [batch_size, channels[0], 14, 14]
 
         out = self.layers(out)                   # [batch_size, channels[-1], 4, 4]
 

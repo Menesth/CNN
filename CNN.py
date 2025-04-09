@@ -115,55 +115,57 @@ class CNN(nn.Module):
         return pred
 ############################
 
-##### Initialize model ######
-model = CNN().to(device)
+if __name__ == "__main__":
 
-nb_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f'number of parameters: {nb_params}')
-############################
-
-
-####### Training ########
-optimizer = optim.Adam(model.parameters(), lr=LR)
-scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1 if epoch < 6 else 0.1)
-
-for epoch in trange(EPOCHS):
-    model.train()
-    running_loss = 0.0
-
-    for X, y in train_loader:
-        X, y = X.to(device), y.to(device)
-        
-        y_hat = model(X)
-        loss = LOSS(y_hat, y)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item()
-
-    scheduler.step()
-    avg_train_loss = running_loss / len(train_loader)
-    print(f"epoch [{epoch+1}/{EPOCHS}], batch loss: {avg_train_loss:.4f}")
-############################
-
-####### Testing ########
-model.eval()
-sto_correct, argmax_correct = 0, 0
-total = 0
-
-with torch.no_grad():
-    for X, y in test_loader:
-        X, y = X.to(device), y.to(device)
-        sto_pred = model.stochastic_predict(X)
-        argmax_pred = model.argmax_predict(X)
-        total += y.size(0)
-        sto_correct += (sto_pred == y).sum().item()
-        argmax_correct += (argmax_pred == y).sum().item()
-
-sto_accuracy = 100 * sto_correct / total
-argmax_accuracy = 100 * argmax_correct / total
-print(f"Test accuracy (with stochastic prediction): {sto_accuracy:.2f}%")
-print(f"Test accuracy (with argmax prediction): {argmax_accuracy:.2f}%")
-############################
+    ##### Initialize model ######
+    model = CNN().to(device)
+    
+    nb_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f'number of parameters: {nb_params}')
+    ############################
+    
+    
+    ####### Training ########
+    optimizer = optim.Adam(model.parameters(), lr=LR)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1 if epoch < 6 else 0.1)
+    
+    for epoch in trange(EPOCHS):
+        model.train()
+        running_loss = 0.0
+    
+        for X, y in train_loader:
+            X, y = X.to(device), y.to(device)
+            
+            y_hat = model(X)
+            loss = LOSS(y_hat, y)
+    
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    
+            running_loss += loss.item()
+    
+        scheduler.step()
+        avg_train_loss = running_loss / len(train_loader)
+        print(f"epoch [{epoch+1}/{EPOCHS}], batch loss: {avg_train_loss:.4f}")
+    ############################
+    
+    ####### Testing ########
+    model.eval()
+    sto_correct, argmax_correct = 0, 0
+    total = 0
+    
+    with torch.no_grad():
+        for X, y in test_loader:
+            X, y = X.to(device), y.to(device)
+            sto_pred = model.stochastic_predict(X)
+            argmax_pred = model.argmax_predict(X)
+            total += y.size(0)
+            sto_correct += (sto_pred == y).sum().item()
+            argmax_correct += (argmax_pred == y).sum().item()
+    
+    sto_accuracy = 100 * sto_correct / total
+    argmax_accuracy = 100 * argmax_correct / total
+    print(f"Test accuracy (with stochastic prediction): {sto_accuracy:.2f}%")
+    print(f"Test accuracy (with argmax prediction): {argmax_accuracy:.2f}%")
+    ############################
